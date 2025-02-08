@@ -37,6 +37,10 @@ from utils.sh_utils import SH2RGB
 from tqdm.contrib.concurrent import thread_map
 from operator import itemgetter
 
+#ADDED
+import re
+from scene.custom_loader import read_custom_intrinsics, read_custom_extrinsics, create_colmap_extrinsic_format
+
 
 class CameraInfo(NamedTuple):
     uid: int
@@ -599,10 +603,107 @@ except ImportError:
             raise NotImplementedError("CO3DReader requires co3d package (https://github.com/facebookresearch/co3d) to be installed.")
 
 
+class CustomReader(Reader):
+    def __init__(self, path: Path, depth_mode=None, image_dir=None, test_hold: float|int=8):
+        params_dir = os.path.join(path, "params")
+        check_file = sorted(os.listdir(params_dir))
+    
+        camera_extrinsic_files = []
+        for file in check_file:
+            if "cams_to_lidar" in file:
+                cams_lidar_extrinsic_file = os.path.join(params_dir, "cams_to_lidar.txt")
+            elif "lidars" in file:
+                lidar_extrinsic_file = os.path.join(params_dir, file)
+            elif "cam" in file and not "lidar" in file:
+                camera_extrinsic_files.append(os.path.join(params_dir, file))
+            elif "intrinsics" in file:
+                cameras_intrinsic_file = os.path.join(params_dir, file)
+        
+        lidar_extrinsics = read_custom_extrinsics(lidar_extrinsic_file)
+        cam_intrinsics = read_custom_intrinsics(cameras_intrinsic_file)
+        cam_extrinsics = {}
+
+        """
+        lidar_extrinsics = {lidar_timestamp(int): lidar_extrinsics(4x4), ...}
+            e.g.) {0: lidar_extr[0], 1: lidar_extr[1], ...}
+
+        cam_intrinsics = {cam_id(int): cam_intrinsics(3x3), ...}
+            e.g.) {0: intr[0], ...}
+        """
+
+        # Test code (valid_cam_id)
+        if camera_extrinsic_files:
+            valid_cam_id = [0, 1, 2, 3]
+            for file in camera_extrinsic_files:
+                basename = os.path.basename(file)
+                cam_id = int(*re.findall(r'\d+', basename)) # e.g. "cam0_to_lidar.txt" -> return 0(int)
+                if cam_id in valid_cam_id:
+                    cam_extrinsics[cam_id] = read_custom_extrinsics(file)
+        else:
+            # using rig relative transformation
+            cams_lidar_extrinsic = np.loadtxt(cams_lidar_extrinsic_file)
+            for extr in cams_lidar_extrinsic:
+                cam_id = extr[0]
+                if cam_id in valid_cam_id:
+                    cam_extrinsics[cam_id] = lidar_extrinsics @ extr[1:].reshape(4, 4) # Nx4x4 = Nx4x4 @ 4x4
+
+        """
+        cam_extrinsics = {image_id: Image(...), ...}
+        """
+        cam_extrinsics = create_colmap_extrinsic_format(cam_extrinsics)
+
+        image_dir = image_dir or "images"
+        self.cam_extrinsics = cam_extrinsics
+        self.cam_intrinsics = cam_intrinsics
+        self.images_folder = path / image_dir
+
+        cams = [(key, Path(ex.name)) for key, ex in cam_extrinsics.items()]
+        cams = [c for c, _ in sorted(cams, key=itemgetter(1))] # sorted by imagename
+
+        train_cams, test_cams = self.split_cams(cams, test_hold)
+        super().__init__(train_cams, test_cams, depth_mode)
+
+    def read_cam(self, key):
+        extr = self.cam_extrinsics[key]
+        intr = self.cam_intrinsics[extr.camera_id]
+
+        uid = extr.id
+        R = qvec2rotmat(extr.qvec)
+        T = extr.tvec
+
+        # TODO: properly handle camera models
+        fx = intr[0][0]
+        fy = intr[1][1] 
+        cx = intr[0][2] 
+        cy = intr[1][2] 
+
+        image_path = os.path.join(self.images_folder, extr.name)
+        image_name = image_path
+        image = Image.open(image_path).convert("RGB")
+        depth = self.read_depth(self.images_folder.parent, image_name)
+
+        # TODO: scale the fx and fy according to the resolution in Camera.py - Class Camera
+        width, height = image.size
+        cam_info = CameraInfo(
+            uid=uid,
+            R=R,
+            T=T,
+            K=[fx, fy, cx, cy],
+            image=image,
+            depth=depth,
+            image_path=image_path,
+            image_name=image_name,
+            width=width,
+            height=height,
+        )
+        return cam_info
+
+
 def load_scene_info(args: ModelParams) -> SceneInfo:
     source_path = Path(args.source_path)
     _readers = {
         # Note that the extra args are tuples (trailing comma).
+        "params": (CustomReader, (args.images, args.test_hold)),
         "sparse": (ColmapReader, (args.images, args.test_hold)),
         "transforms_train.json": (BlenderReader, ()),
         "frames": (ScannetReader, (args.test_hold,)),

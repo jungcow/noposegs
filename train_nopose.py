@@ -23,7 +23,9 @@ from utils.loss_utils import l1_loss, ssim, anisotropy_loss
 from torch.utils.tensorboard.writer import SummaryWriter
 
 from lietorch import SE3
-
+import torchvision
+import open3d as o3d
+import numpy as np
 
 PROGRESS_BAR_UPDATE_ITERS = 50
 network_gui = None
@@ -129,6 +131,17 @@ def print_traj_metrics(pred_poses, gt_poses):
     print(f"RPE_t: {rel_pos_err.mean().item():.4f}")
     print(f"ATE  : {traj_err.item():.4f}")
 
+def mkdir_p(folder_path):
+    from os import makedirs, path
+    from errno import EEXIST
+    # Creates a directory. equivalent to using mkdir -p on the command line
+    try:
+        makedirs(folder_path)
+    except OSError as exc: # Python >2.5
+        if exc.errno == EEXIST and path.isdir(folder_path):
+            pass
+        else:
+            raise
 
 def training(
     dataset: ModelParams,
@@ -136,6 +149,24 @@ def training(
     pipe: PipelineParams,
 ):
     scene = Scene(dataset)
+
+    RESULT_CAM = [1, 20, 38, 57] # straight
+    # RESULT_CAM = [4, 36, 68, 100] # zigzag
+
+    #! Visualization code(1)
+    iter_img_path, iter_depth_path, iter_pose_path, iter_mask_path = [], [], [], []
+    cam_id_list, gt_pose_list, init_pose_list, current_pose_list = [], [], [], []
+    # for cam_id in range(4):
+    for cam_id in range(len(RESULT_CAM)):
+        iter_img_path.append(os.path.join(scene.model_path, "iter_image", "CAM%d" % cam_id))
+        iter_depth_path.append(os.path.join(scene.model_path, "iter_depth", "CAM%d" % cam_id))
+        iter_pose_path.append(os.path.join(scene.model_path, "iter_pose", "CAM%d" % cam_id))
+        iter_mask_path.append(os.path.join(scene.model_path, "iter_mask", "CAM%d" % cam_id))
+        mkdir_p(iter_img_path[-1])
+        mkdir_p(iter_depth_path[-1])
+        mkdir_p(iter_pose_path[-1])
+        mkdir_p(iter_mask_path[-1])
+
 
     bg_color = [1, 1, 1] if dataset.white_background else [0, 0, 0]
     background = torch.tensor(bg_color, dtype=torch.float32, device="cuda")
@@ -208,6 +239,11 @@ def training(
             points = 0.25 * (poses.max(dim=0).values - poses.min(dim=0).values) * (2 * torch.rand(npoints, 3, device="cuda") - 1)
             points = points + poses.mean(dim=0)
             colors = torch.rand(npoints, 3, device="cuda")
+        elif opt.offline_point_init == "lidar":
+            from utils.sh_utils import SH2RGB
+            pcd, _ = model_from_cams_lidar(opt, '/home/interns/data/KITTI-360/custom_data/straight/lidar/colorized_pc_0.1.ply')
+            points = pcd._xyz.detach()
+            colors = SH2RGB(pcd._features_dc.detach()).squeeze()
         else:
             raise ValueError(f"Unknown init method '{opt.offline_point_init}'")
 
@@ -274,6 +310,10 @@ def training(
                 progress_bar.update(PROGRESS_BAR_UPDATE_ITERS)
             if iteration == opt.iterations:
                 progress_bar.close()
+            if viewpoint_cam.uid in RESULT_CAM:
+                # print(f"[{viewpoint_cam.uid}]imagename: ", viewpoint_cam.image_name)
+                vis_cam_idx = RESULT_CAM.index(viewpoint_cam.uid)
+                torchvision.utils.save_image(image, os.path.join(iter_img_path[vis_cam_idx], str(iteration).zfill(6) + ".png"))
         
             # Densification
             if iteration > opt.densify_from_iter and iteration < opt.densify_until_iter:

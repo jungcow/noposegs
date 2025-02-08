@@ -104,8 +104,8 @@ class OptimizationParams(ParamGroup):
     opacity_lr: float = 0.025
     scaling_lr: float = 0.005
     rotation_lr: float = 0.001
-    cam_lr_init: float = 0.0
-    cam_lr_final: float = 1e-5
+    cam_lr_init: float = 1e-2
+    cam_lr_final: float = 1e-4
     cam_lr_delay_steps: int = 0
     cam_lr_delay_mult: float = 0.01
     cam_lr_scheduler: str = "cosine"

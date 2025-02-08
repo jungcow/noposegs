@@ -345,3 +345,9 @@ def read_colmap_bin_array(path):
         array = np.fromfile(fid, np.float32)
     array = array.reshape((width, height, channels), order="F")
     return np.transpose(array, (1, 0, 2)).squeeze()
+
+
+def create_extrinsics(id, qvec, tvec, camera_id, name, xys=None, point3D_ids=None):
+    return Image(id=id, qvec=qvec, tvec=tvec,
+                    camera_id=camera_id, name=name,
+                    xys=xys, point3D_ids=point3D_ids)
