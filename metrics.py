@@ -50,6 +50,22 @@ def lpips(x, y):
         _lpips = LPIPS(net_type="vgg").cuda()
     return _lpips(x, y)
 
+import torch
+import torch.nn.functional as F
+
+def pad_and_stack(image_list):
+    max_h = max(img.shape[1] for img in image_list)
+    max_w = max(img.shape[2] for img in image_list)
+    
+    padded_images = []
+    for img in image_list:
+        _, h, w = img.shape
+        pad_right = max_w - w
+        pad_bottom = max_h - h
+        padded_img = F.pad(img, (0, pad_right, 0, pad_bottom))
+        padded_images.append(padded_img)
+        
+    return torch.stack(padded_images)
 
 def readImages(renders_dir, gt_dir):
     def read_image(fname):
@@ -60,8 +76,8 @@ def readImages(renders_dir, gt_dir):
     images = thread_map(read_image, os.listdir(renders_dir), disable=False)
 
     renders, gts, fnames = zip(*images)
-    renders = torch.stack(renders).cuda()
-    gts = torch.stack(gts).cuda()
+    renders = pad_and_stack(renders).cuda()
+    gts = pad_and_stack(gts).cuda()
     return renders, gts, fnames
 
 
