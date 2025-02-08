@@ -136,6 +136,8 @@ class OptimizationParams(ParamGroup):
 
     num_points_limit: int = 0
 
+    warmup_iter = 500
+
     _description = "Optimization Parameters"
 
 

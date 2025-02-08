@@ -17,7 +17,7 @@ from scene import Scene
 from scene.cameras import Camera
 from scene.gaussian_model import GaussianModel, GaussianPointCloud, get_pointcloud_optimizer
 from utils.graphics_utils import BasicPointCloud
-from utils.general_utils import compute_traj_metrics, safe_state, unproject_points, get_cosine_lr_func, Scheduler, align_poses
+from utils.general_utils import compute_traj_metrics, safe_state, unproject_points, get_cosine_lr_func, Scheduler, align_poses, draw_pose_plot, make_transformation
 from utils.loss_utils import l1_loss, ssim, anisotropy_loss
 
 from torch.utils.tensorboard.writer import SummaryWriter
@@ -58,6 +58,22 @@ def model_from_cams(opt: OptimizationParams, initial_cams: list[Camera], pts_per
     gaussians = GaussianPointCloud.from_pointcloud(total_points, total_colors)
     optimizer = get_pointcloud_optimizer(opt, gaussians)
     return gaussians, optimizer
+
+@torch.no_grad()
+def model_from_cams_lidar(opt: OptimizationParams, lidar_path, sh_degree=0):
+    print("Converting .pcd to .ply, will happen only the first time you open the scene.")                
+    assert lidar_path is not None, "Lidar point cloud not found!"
+    pc = o3d.io.read_point_cloud(lidar_path)
+    xyz = np.asarray(pc.points)
+    # rgb = np.asarray(pc.colors)
+    rgb = np.ones_like(xyz) * 0.5
+
+    gaussians = GaussianPointCloud.from_pointcloud(xyz, rgb)
+    optimizer = get_pointcloud_optimizer(opt, gaussians)
+
+    print("gaussians size: ", len(gaussians.get_xyz))
+    return gaussians, optimizer
+
 
 
 def optimize(
@@ -310,10 +326,20 @@ def training(
                 progress_bar.update(PROGRESS_BAR_UPDATE_ITERS)
             if iteration == opt.iterations:
                 progress_bar.close()
+            
+            #! visualize renders and poses
             if viewpoint_cam.uid in RESULT_CAM:
                 # print(f"[{viewpoint_cam.uid}]imagename: ", viewpoint_cam.image_name)
                 vis_cam_idx = RESULT_CAM.index(viewpoint_cam.uid)
                 torchvision.utils.save_image(image, os.path.join(iter_img_path[vis_cam_idx], str(iteration).zfill(6) + ".png"))
+
+                gt_pose = make_transformation(R=viewpoint_cam.gtpose_R, t=viewpoint_cam.gtpose_T) 
+                init_pose = make_transformation(R=viewpoint_cam.initpose_R, t = viewpoint_cam.initpose_T)
+                current_pose = viewpoint_cam.pose.matrix().detach().cpu().numpy()
+
+                draw_pose_plot(viewpoint_cam.uid, gt_pose, init_pose, current_pose, os.path.join(iter_pose_path[vis_cam_idx], str(iteration).zfill(6) + ".png"))
+
+
         
             # Densification
             if iteration > opt.densify_from_iter and iteration < opt.densify_until_iter:
@@ -362,12 +388,15 @@ def training(
                 gaussians.optimizer.step()
                 gaussians.optimizer.zero_grad(set_to_none=True)
                 torch.cuda.nvtx.range_pop()
-                if scene.optimizer is not None and iteration < opt.cam_lr_max_steps:
+                if scene.optimizer is not None and iteration < opt.cam_lr_max_steps and iteration > opt.warmup_iter:
                     torch.cuda.nvtx.range_push("Camera optimizer step")
                     scene.optimizer.step()
                     viewpoint_cam.update_pose()
                     scene.optimizer.zero_grad(set_to_none=True)
                     torch.cuda.nvtx.range_pop()
+                if iteration <= opt.warmup_iter:
+                    scene.optimizer.zero_grad(set_to_none=True)
+                    viewpoint_cam._pose_delta.data.zero_()
 
             if iteration % 100 == 0 or iteration == 1:
                 scene.save(iteration)

@@ -80,6 +80,7 @@ class Scene:
             print(f"Adding noise with std {args.cam_noise}")
             for c in cams:
                 c._pose = c._pose * random_pose(args.cam_noise).to(c._pose.device)
+                c.set_init_pose(c._pose.retr(c._pose_delta).matrix().detach().cpu().numpy())
         self.train_cameras = cams
 
         print("Loading Test Cameras")

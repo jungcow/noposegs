@@ -47,6 +47,10 @@ class Camera(nn.Module):
 
         self.uid = uid
         self.colmap_id = colmap_id
+        self.gtpose_R = R
+        self.gtpose_T = T
+        self.initpose_R = self.gtpose_R
+        self.initpose_T = self.gtpose_T
 
         T: torch.Tensor = torch.as_tensor(T).float().cuda()
         R: torch.Tensor = torch.as_tensor(R).float().cuda()
@@ -195,6 +199,11 @@ class Camera(nn.Module):
     def update_pose(self):
         self._pose = self._pose.retr(self._pose_delta)
         self._pose_delta.data.zero_()
+
+    @torch.no_grad()
+    def set_init_pose(self, init_pose):
+        self.initpose_R = init_pose[:3, :3]
+        self.initpose_T = init_pose[:3, 3]
 
     @property
     def cam2world(self):

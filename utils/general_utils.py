@@ -18,6 +18,8 @@ import torch
 import torch.nn.functional as F
 from PIL.Image import Image as PILImage
 
+import matplotlib.pyplot as plt
+
 
 def inverse_sigmoid(x):
     return torch.log(x / (1 - x))
@@ -529,3 +531,96 @@ def align_forward(pose_a: torch.Tensor, pose_b: torch.Tensor):
     # use as mat4: [sR, t] @ pts2
     # or as s * R @ pts2 + t
     return s, R, t
+
+def plot_pose(ax, pose, color='r', length=1.0):
+    # Origin of the pose
+    origin = pose[:3, 3]
+
+    # X, Y, Z axes (rotation matrix part)
+    x_axis = pose[:3, 0]
+    y_axis = pose[:3, 1]
+    z_axis = pose[:3, 2]
+
+    # Plot the axes with quivers
+    x_arrow = ax.quiver(*origin, *x_axis, color=color, length=length, normalize=True)
+    y_arrow = ax.quiver(*origin, *y_axis, color=color, length=length, normalize=True)
+    z_arrow = ax.quiver(*origin, *z_axis, color=color, length=length, normalize=True)
+
+    return [x_arrow, y_arrow, z_arrow]
+
+def draw_pose_plot(cam_id, gt_pose, init_pose, current_pose, save_path):
+    fig = plt.figure()
+    ax = fig.add_subplot(111, projection='3d')
+    title = "Iteration: " + save_path.split('/')[-1].split('.')[0]
+    ax.set_title(title)
+
+    # Convert poses to world coordinates
+    # current_pose = current_pose @ get_l2c(cam_id) # l2w
+    # gt_pose = gt_pose @ get_l2c(cam_id) # l2w
+    # init_pose = init_pose @ get_l2c(cam_id) # l2w
+
+    # Calculate the midpoint between gt_pose and current_pose
+    midpoint_x = (gt_pose[0, 3] + init_pose[0, 3]) / 2
+    midpoint_y = (gt_pose[1, 3] + init_pose[1, 3]) / 2
+    midpoint_z = (gt_pose[2, 3] + init_pose[2, 3]) / 2
+
+    # Plot the poses
+    grid_scale = 1.0  # Set the axis limit to 1m
+    legend_handles = []
+    legend_handles += plot_pose(ax, init_pose, 'g', length=0.15 * grid_scale)
+    legend_handles += plot_pose(ax, current_pose, 'r', length=0.15 * grid_scale)
+    legend_handles += plot_pose(ax, gt_pose, 'b', length=0.15 * grid_scale)
+
+    # Set the limits of the plot with midpoint as the center
+    ax.set_xlim([midpoint_x - grid_scale / 2, midpoint_x + grid_scale / 2])
+    ax.set_ylim([midpoint_y - grid_scale / 2, midpoint_y + grid_scale / 2])
+    ax.set_zlim([midpoint_z - grid_scale / 2, midpoint_z + grid_scale / 2])
+
+    # Ensure uniform aspect ratio
+    ax.set_box_aspect([1, 1, 1])  # Equal aspect ratio for x, y, z axes
+
+    ax.set_xlabel('X')
+    ax.set_ylabel('Y')
+    ax.set_zlabel('Z')
+
+    # Add GT pose x, y, z values to legend
+    gt_pose_x = gt_pose[0, 3]
+    gt_pose_y = gt_pose[1, 3]
+    gt_pose_z = gt_pose[2, 3]
+    label = f"({gt_pose_x:.2f}, {gt_pose_y:.2f}, {gt_pose_z:.2f})"
+    ax.text(gt_pose_x-0.3, gt_pose_y-0.3, gt_pose_z-0.2, label, zdir=None)
+
+    # Add current pose x, y, z values to legend
+    current_pose_x = current_pose[0, 3]
+    current_pose_y = current_pose[1, 3]
+    current_pose_z = current_pose[2, 3]
+    label = f"({current_pose_x:.2f}, {current_pose_y:.2f}, {current_pose_z:.2f})"
+    ax.text(current_pose_x-0.3, current_pose_y-0.3, current_pose_z+0.35, label, zdir=None)
+
+    # Add a legend
+    ax.legend(legend_handles[::3], ['Init Pose', 'Current Pose', 'GT Pose'], loc='upper left')
+
+    plt.savefig(save_path)
+    ax.view_init(0, 0)
+    plt.savefig(save_path.replace('.png', '_front.png'))
+    ax.view_init(0, -90)
+    plt.savefig(save_path.replace('.png', '_side.png'))
+    plt.close()
+
+
+def make_transformation(R=np.eye(3), t=np.zeros(3), batch=False):
+    if batch:
+        batch_size = len(R)
+        R = np.array(R)
+        t = np.array(t)
+        
+        poses = np.zeros((batch_size, 4, 4))
+        poses[:, :3, :3] = R
+        poses[:, :3, 3] = t.reshape(-1, 3)
+        poses[:, 3, 3] = 1.0
+        return poses
+    else:
+        pose = np.eye(4)
+        pose[:3, :3] = R
+        pose[:3, 3] = t
+        return pose
