@@ -111,7 +111,6 @@ class Scene:
                 self.test_cameras, self.model_path / f"test_cameras_{iteration}.pth"
             )
 
-
     def getTrainCameras(self):
         return self.train_cameras
 

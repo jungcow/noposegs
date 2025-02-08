@@ -60,8 +60,8 @@ def model_from_cams(opt: OptimizationParams, initial_cams: list[Camera], pts_per
     return gaussians, optimizer
 
 @torch.no_grad()
-def model_from_cams_lidar(opt: OptimizationParams, lidar_path, sh_degree=0):
-    print("Converting .pcd to .ply, will happen only the first time you open the scene.")                
+def model_from_cams_lidar(dataset: ModelParams, opt: OptimizationParams, sh_degree=0):
+    lidar_path = os.path.join(dataset.source_path, dataset.lidar_path)
     assert lidar_path is not None, "Lidar point cloud not found!"
     pc = o3d.io.read_point_cloud(lidar_path)
     xyz = np.asarray(pc.points)
@@ -255,9 +255,9 @@ def training(
             points = 0.25 * (poses.max(dim=0).values - poses.min(dim=0).values) * (2 * torch.rand(npoints, 3, device="cuda") - 1)
             points = points + poses.mean(dim=0)
             colors = torch.rand(npoints, 3, device="cuda")
-        elif opt.offline_point_init == "lidar":
+        elif opt.offline_point_init == "lidar" and dataset.lidar_path:
             from utils.sh_utils import SH2RGB
-            pcd, _ = model_from_cams_lidar(opt, '/home/interns/data/KITTI-360/custom_data/straight/lidar/colorized_pc_0.1.ply')
+            pcd, _ = model_from_cams_lidar(dataset, opt)
             points = pcd._xyz.detach()
             colors = SH2RGB(pcd._features_dc.detach()).squeeze()
         else:
@@ -294,10 +294,28 @@ def training(
             render_pkg["radii"],
         )
 
-        # Loss
-        gt_image = viewpoint_cam.image_with_background(background)
         torch.cuda.nvtx.range_push("loss forward")
-        Ll1 = l1_loss(image, gt_image)
+        gt_image = viewpoint_cam.image_with_background(background)
+        if opt.mask_loss:
+            with torch.no_grad():
+                mask = render(
+                    viewpoint_cam,
+                    gaussians,
+                    pipe,
+                    torch.zeros(3, device="cuda"),
+                    override_color=torch.ones((len(gaussians), 3), device="cuda")
+                )["render"]
+                mask = (mask > 0.99).float()
+                if viewpoint_cam.uid in RESULT_CAM:
+                    vis_cam_idx = RESULT_CAM.index(viewpoint_cam.uid)
+                    if mask.size(0) == 1:
+                        mask_rgb = mask.expand(3, -1, -1)
+                    else:
+                        mask_rgb = mask
+                    torchvision.utils.save_image(mask_rgb, os.path.join(iter_mask_path[vis_cam_idx], str(iteration).zfill(6) + ".png"))
+        else:
+            mask = None
+        Ll1 = l1_loss(image, gt_image, mask)
         loss = (1.0 - opt.lambda_dssim) * Ll1 + opt.lambda_dssim * (
             1.0 - ssim(image, gt_image)
         )
@@ -340,7 +358,6 @@ def training(
                 draw_pose_plot(viewpoint_cam.uid, gt_pose, init_pose, current_pose, os.path.join(iter_pose_path[vis_cam_idx], str(iteration).zfill(6) + ".png"))
 
 
-        
             # Densification
             if iteration > opt.densify_from_iter and iteration < opt.densify_until_iter:
                 torch.cuda.nvtx.range_push("densification stats")

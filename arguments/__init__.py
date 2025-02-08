@@ -70,6 +70,8 @@ class ModelParams(ParamGroup):
     # > 1 means use every nth view (will be truncated to int)
     test_hold: float = 8.0
 
+    lidar_path = 'lidar/pc_0.1.ply'
+
     _description = "Loading Parameters"
     _shortcuts = {
         "source_path": "-s",
@@ -137,6 +139,7 @@ class OptimizationParams(ParamGroup):
     num_points_limit: int = 0
 
     warmup_iter = 500
+    mask_loss = True
 
     _description = "Optimization Parameters"
 
