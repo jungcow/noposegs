@@ -303,6 +303,18 @@ def save_cam_poses(cams: list, path):
     torch.save(poses, path)
 
 
+@torch.no_grad()
+def save_cam_poses_for_prior(cams: list, path):
+    """
+    for pose_prior.txt used on vanilla-GS
+    """
+    poses = torch.stack([c.pose.matrix() for c in cams])
+    poses_np = poses.cpu().numpy()
+    poses_np_flat = poses_np.reshape(poses_np.shape[0], -1)
+    poses_np_flat = poses_np_flat.astype(np.float32)
+    np.savetxt(path, poses_np_flat, delimiter=' ')
+
+
 def read_poses(pose_path, map_location=None):
     poses = torch.load(pose_path, map_location=map_location)
     return poses["gt"], poses["pose"]

@@ -63,6 +63,8 @@ class ModelParams(ParamGroup):
     num_views: int = -1
     view_list: list[str] = field(default_factory=lambda: [])
     cam_noise: float = 0.0
+    cam_noise_only_trans = False
+
     init_cam_identity: bool = False
     load_depth: str = ""
     # only relevant if no test set is specified

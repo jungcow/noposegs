@@ -26,10 +26,11 @@ from utils.general_utils import (
     read_poses,
     se3_from_mat4,
     save_cam_poses,
+    save_cam_poses_for_prior,
 )
 from utils.system_utils import searchForMaxIteration
 
-from .pose import random_pose
+from .pose import random_pose, random_pose_only_trans
 
 
 class Scene:
@@ -79,7 +80,10 @@ class Scene:
         if hasattr(args, "cam_noise") and args.cam_noise > 0:
             print(f"Adding noise with std {args.cam_noise}")
             for c in cams:
-                c._pose = c._pose * random_pose(args.cam_noise).to(c._pose.device)
+                if hasattr(args, "cam_noise_only_trans") and args.cam_noise_only_trans:
+                    c._pose = c._pose * random_pose_only_trans(args.cam_noise).to(c._pose.device)
+                else:
+                    c._pose = c._pose * random_pose(args.cam_noise).to(c._pose.device)
                 c.set_init_pose(c._pose.retr(c._pose_delta).matrix().detach().cpu().numpy())
         self.train_cameras = cams
 
@@ -105,6 +109,9 @@ class Scene:
     def save(self, iteration):
         save_cam_poses(
             self.train_cameras, self.model_path / f"train_cameras_{iteration}.pth"
+        )
+        save_cam_poses_for_prior(
+            self.train_cameras, self.model_path / f"pose_prior_{iteration}.txt"
         )
         if self.test_cameras:
             save_cam_poses(
